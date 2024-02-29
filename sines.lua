@@ -1,4 +1,4 @@
---- sines v1.0.0 ~
+--- sines v1.0.1 ~
 -- @oootini
 -- @p3r7, @sixolet, @tomwaters,
 -- @JosueArias, @x2mirko
@@ -26,6 +26,8 @@ MusicUtil = require "musicutil"
 
 local max_slider_size = 32
 local prev_output_level = 0
+local prev_amp_slew = 0
+local prev_params_jump = 1
 local sliders = {}
 local fader_follow_vals = {}
 local prev_vols = {}
@@ -44,6 +46,8 @@ for i = 1, 16 do
   follow_clocks[i] = i
   crow_out_pairs[i] = i
 end
+
+local crow_in1_frequency
 
 local edit = 1
 local accum = 1
@@ -140,7 +144,6 @@ function init()
 
   edit = 0
   for i = 1, 16 do
-    env_values[i] = params:get("env" .. i)
     if not z_tuning then
       cents[i] = params:get("cents" .. i)
     end
@@ -148,39 +151,11 @@ function init()
     prev_vols[i] = params:get("vol" .. i)
     prev_envs[i] = params:get("env" .. i)
   end
+  prev_params_jump = params:get("16n_params_jump")
 
   _16n.init(_16n_slider_callback)
   for i = 1, 16 do
     prev_16n_slider_v["vol"][i] = util.linlin(0.0, 1.0, 0, 127, params:get("vol" .. i))
-  end
-
-  for i = 1, 16 do
-    follow_clocks[i] = clock.run(
-      function()
-        local step_s = 1 / fps
-        while true do
-          clock.sleep(step_s)
-          if screen_dirty then
-            set_active()
-            redraw()
-            screen_dirty = false
-          end
-          -- bang the env delay rand value
-          engine.env_delay_rand(i - 1, math.random() * params:get("env_delay_rand" .. i))
-          fader_abs_vals[i] = params:get("fader" .. i)
-          fader_follow_vals[i] = follow_countdown(i, fader_abs_vals[i])
-          if params:get("play_mode") == 1 then
-            if math.abs(fader_follow_vals[i] - fader_abs_vals[i]) > 10 then
-              engine.vol(i - 1 , util.linexp(0, 127, 0.0, 1.0, fader_follow_vals[i]))
-            end
-            if fader_follow_vals[i] == 0 then
-              --reset slider to 0
-              sliders[i] = 0
-            end
-          end
-        end
-        screen_dirty = false
-      end)
   end
 
   -- check if z_tuning
@@ -204,11 +179,77 @@ function init()
         end
       end)
   end
+
+  -- set root note based on frequency measured at crow input 1
+  -- set once during script init only
+  if norns.crow.connected() then
+    crow.input[1].mode("freq", 0.1)
+    crow.input[1].freq = process_crow_input
+  end
+
+
+  redraw_clock = clock.run(
+    function()
+      local step_s = 1 / fps
+      while true do
+        clock.sleep(step_s)
+        if screen_dirty then
+          set_active()
+          redraw()
+          screen_dirty = false
+        end
+      end
+    end)
+
+  for i = 1, 16 do
+    follow_clocks[i] = clock.run(
+      function()
+        local step_s = 1 / fps
+        while true do
+          clock.sleep(step_s)
+          -- bang the env delay rand value
+          engine.env_delay_rand(i - 1, math.random() * params:get("env_delay_rand" .. i))
+          fader_abs_vals[i] = params:get("fader" .. i)
+          fader_follow_vals[i] = follow_countdown(i, fader_abs_vals[i])
+          if params:get("play_mode") == 1 then
+            if math.abs(fader_follow_vals[i] - fader_abs_vals[i]) > 10 then
+              engine.vol(i - 1 , util.linexp(0, 127, 0.0, 1.0, fader_follow_vals[i]))
+            end
+            if fader_follow_vals[i] <= 10 then
+              --reset slider to 0
+              sliders[i] = 0
+            end
+          end
+        end
+        screen_dirty = false
+      end)
+  end
+
 end
 
 function cleanup()
+  clock.cancel(redraw_clock)
   for i = 1, 16 do
     clock.cancel(follow_clocks[i])
+  end
+end
+
+function process_crow_input(f)
+  if crow_in1_frequency == nil then
+    crow_in1_frequency = f
+    print("^^ measured crow in1 frequency at " .. crow_in1_frequency .. "hz")
+    if crow_in1_frequency ~= 0 then
+      if z_tuning then
+        params:set("root_note", 69)
+        params:set('zt_root_freq', crow_in1_frequency)
+        print("^^ set z_root to " .. crow_in1_frequency .. "hz")
+      else
+        params:set("root_note", MusicUtil.freq_to_note_num(crow_in1_frequency))
+        print("^^ set root note to nearest MIDI note " .. MusicUtil.note_num_to_name(params:get("root_note"), true))
+      end
+    elseif crow_in1_frequency == 0 then
+      print("^^ no input patched to crow in1")
+    end
   end
 end
 
@@ -273,9 +314,17 @@ function add_params()
   params:add_group("faders config", 2)
   -- reset style
   params:add{type = "option", id = "reset_style", name = "fader reset style", options = {"return", "zeroed"}, default = 2}
-
   -- play mode
   params:add{type = "number", id = "play_mode", name = "fader play mode", min = 0, max = 1, default = 0, formatter = function(param) return play_mode_formatter(param:get()) end, action = function(x) set_play_mode(x) end}
+
+  -- env delay
+  params:add_group("env delay", 17)
+  params:add_control("env_delay_rand_global", "global env delay rand mult", controlspec.new(0.0, 1.0, 'lin', 0.1, 0.0))
+  params:set_action("env_delay_rand_global", function(x) set_env_delay_rand_global(x) end)
+  for i = 1,16 do
+    params:add_control("env_delay_rand" .. i, i .. "n env delay rand mult", controlspec.new(0.0, 1.0, 'lin', 0.1, 0.0))
+    params:set_action("env_delay_rand" .. i, function(x) set_env_delay_rand(i - 1, x) end)
+  end
 
   -- crow config params
   params:add_group("crow config", 3)
@@ -295,15 +344,6 @@ function add_params()
     -- crow env delay position
     params:add{type = "option", id = "crow_env_delay_pos" .. i, name = i .. "n crow env delay", options = {"before", "after"}, default = 2}
     params:set_action("crow_env_delay_pos" .. i, function() set_crow_env_delay_pos() end)
-  end
-
-  -- env delay
-  params:add_group("env delay", 17)
-  params:add_control("env_delay_rand_global", "global env delay rand mult", controlspec.new(0.0, 1.0, 'lin', 0.1, 0.0))
-  params:set_action("env_delay_rand_global", function(x) set_env_delay_rand_global(x) end)
-  for i = 1,16 do
-    params:add_control("env_delay_rand" .. i, i .. "n env delay rand mult", controlspec.new(0.0, 1.0, 'lin', 0.1, 0.0))
-    params:set_action("env_delay_rand" .. i, function(x) set_env_delay_rand(i - 1, x) end)
   end
 
   -- 16n control
@@ -459,6 +499,8 @@ function set_play_mode(x)
   if x == 0 then
     -- faders
     params:set('output_level', prev_output_level)
+    params:set('amp_slew', prev_amp_slew)
+    params:set('16n_params_jump', prev_params_jump)
     for i = 1,16 do
       if params:string("reset_style") == "return" then
         params:set("vol" .. i, prev_vols[i])
@@ -474,6 +516,10 @@ function set_play_mode(x)
     end
   elseif x == 1 then
     -- env follower
+    prev_output_level = params:get('output_level')
+    prev_slew_level = params:get('amp_slew')
+    prev_params_jump = params:get("16n_params_jump")
+    params:set("16n_params_jump", 1)
     for i = 1,16 do
       -- this is very goofy
       prev_vols[i] = params:get("vol" .. i)
@@ -481,10 +527,11 @@ function set_play_mode(x)
       params:set("vol" .. i, 0)
       params:set("env" .. i, 1)
       sliders[i] = 0
-      prev_output_level = params:get('output_level')
+      screen_dirty = true
     end
-    -- slight bump becuase this mode is a bit quieter
+    -- slight bump because this mode is a bit quieter
     params:set('output_level', 3)
+    params:set('amp_slew', 3)
   end
 end
 
@@ -635,13 +682,11 @@ end
 function set_amp_atk(synth_num, value)
   engine.amp_atk(synth_num, value)
   edit = synth_num
-  screen_dirty = true
 end
 
 function set_amp_rel(synth_num, value)
   engine.amp_rel(synth_num, value)
   edit = synth_num
-  screen_dirty = true
 end
 
 function set_amp_env_delay(synth_num, value)
@@ -653,19 +698,16 @@ end
 function set_env_bias(synth_num, value)
   engine.env_bias(synth_num, value)
   edit = synth_num
-  screen_dirty = true
 end
 
 function set_bit_depth(synth_num, value)
   engine.bit_depth(synth_num, value)
   edit = synth_num
-  screen_dirty = true
 end
 
 function set_sample_rate(synth_num, value)
   engine.sample_rate(synth_num, value)
   edit = synth_num
-  screen_dirty = true
 end
 
 function set_synth_pan(synth_num, value)
