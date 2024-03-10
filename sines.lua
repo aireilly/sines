@@ -47,7 +47,7 @@ for i = 1, 16 do
   crow_out_pairs[i] = i
 end
 
-local crow_in1_frequency
+local crow_in1_freq
 
 local edit = 1
 local accum = 1
@@ -175,18 +175,15 @@ function init()
           engine.hz(voice - 1, hz)
         end
         if norns.crow.connected() then
+          -- set root note from crow in1
+          crow.input[1].mode("freq", 0.1)
+          crow.input[1].freq = function(f)
+            crow_set_z_root(f)
+          end
           set_crow()
         end
       end)
   end
-
-  -- set root note based on frequency measured at crow input 1
-  -- set once during script init only
-  if norns.crow.connected() then
-    crow.input[1].mode("freq", 0.1)
-    crow.input[1].freq = process_crow_input
-  end
-
 
   redraw_clock = clock.run(
     function()
@@ -234,20 +231,15 @@ function cleanup()
   end
 end
 
-function process_crow_input(f)
-  if crow_in1_frequency == nil then
-    crow_in1_frequency = f
-    print("^^ measured crow in1 frequency at " .. crow_in1_frequency .. "hz")
-    if crow_in1_frequency ~= 0 then
-      if z_tuning then
-        params:set("root_note", 69)
-        params:set('zt_root_freq', crow_in1_frequency)
-        print("^^ set z_root to " .. crow_in1_frequency .. "hz")
-      else
-        params:set("root_note", MusicUtil.freq_to_note_num(crow_in1_frequency))
-        print("^^ set root note to nearest MIDI note " .. MusicUtil.note_num_to_name(params:get("root_note"), true))
-      end
-    elseif crow_in1_frequency == 0 then
+function crow_set_z_root(f)
+  if crow_in1_freq == nil then
+    crow_in1_freq = f
+    print("^^ measured crow in1 frequency at " .. crow_in1_freq .. " hz")
+    if crow_in1_freq ~= 0 then
+      params:set("zt_root_note", MusicUtil.freq_to_note_num(crow_in1_freq))
+      params:set('zt_root_freq', crow_in1_freq)
+      print("^^ set z_root note to " .. MusicUtil.note_num_to_name(params:get("root_note"), true) .. " and z_root freq to " .. crow_in1_freq .. " hz")
+    elseif crow_in1_freq == 0 then
       print("^^ no input patched to crow in1")
     end
   end
