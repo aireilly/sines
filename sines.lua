@@ -335,7 +335,7 @@ function add_params()
   for i = 1, 16 do
     -- crow env delay position
     params:add{type = "option", id = "crow_env_delay_pos" .. i, name = i .. "n crow env delay", options = {"before", "after"}, default = 2}
-    params:set_action("crow_env_delay_pos" .. i, function() set_crow_env_delay_pos() end)
+    params:set_action("crow_env_delay_pos" .. i, function(x) set_crow_env_delay_pos(x) end)
   end
 
   -- 16n control
@@ -411,7 +411,7 @@ function set_notes()
   scale_toggle = true
   for i = 1, 16 do
     params:set("note" .. i, notes[i])
-    --TODO this is currently unused, is that right?
+    -- TODO this is currently unused, is that right?
     local hz_value = MusicUtil.note_num_to_freq(notes[i])
     if norns.crow.connected() then
       set_crow()
@@ -437,7 +437,7 @@ function set_crow_notes()
   end
 end
 
-function set_crow_note_env_pairs()
+function set_crow_note_env_pair_notes()
   --vo env pairs
   local i = params:get("crow_out_pairs")
   if z_tuning then
@@ -449,34 +449,14 @@ function set_crow_note_env_pairs()
     crow.output[1].volts = params:get("note1")/12
     crow.output[3].volts = params:get("note" .. i)/12
   end
+end
+
+function set_crow_note_env_pairs()
+  --vo env pairs
+  local i = params:get("crow_out_pairs")
+  set_crow_note_env_pair_notes()
   -- 3 stage looping env with assigned "delay" in front or behind
-  --crow out 2 env
-  if params:string("crow_env_delay_pos1") == "before" then
-    -- _/\
-    crow.output[2].action = "loop{ to(0, dyn{crow_env_delay2 = 0.0}), to(7, dyn{crow_attack2 = 0.01}), to(0, dyn{crow_decay2 = 0.1}) }"
-
-  elseif params:string("crow_env_delay_pos1") == "after" then
-    -- /\_
-    crow.output[2].action = "loop{ to(7, dyn{crow_attack2 = 0.01}), to(0, dyn{crow_decay2 = 0.1}), to(0, dyn{crow_env_delay2 = 0}) }"
-  end
-  crow.output[2].dyn.crow_env_delay2 = params:get("env_delay1")/100 + math.random() * params:get("env_delay_rand1")
-  crow.output[2].dyn.crow_attack2 = params:get("attack1")
-  crow.output[2].dyn.crow_decay2 = params:get("decay1")
-  crow.output[2]()
-
-  -- crow out 4 env
-  if params:string("crow_env_delay_pos" .. i) == "before" then
-    -- _/\
-    crow.output[4].action = "loop{ to(0, dyn{crow_env_delay4 = 0.0}), to(7, dyn{crow_attack4 = 0.01}), to(0, dyn{crow_decay4 = 0.1}) }"
-
-  elseif params:string("crow_env_delay_pos" .. i) == "after" then
-    -- /\_
-    crow.output[4].action = "loop{ to(7, dyn{crow_attack4 = 0.01}), to(0, dyn{crow_decay4 = 0.1}), to(0, dyn{crow_env_delay4 = 0}) }"
-  end
-  crow.output[4].dyn.crow_env_delay4 = params:get("env_delay" .. i)/100 + math.random() * params:get("env_delay_rand" .. i)
-  crow.output[4].dyn.crow_attack4 = params:get("attack" .. i)
-  crow.output[4].dyn.crow_decay4 = params:get("decay" .. i)
-  crow.output[4]()
+  set_crow_note_env_pair_envs()
 end
 
 function set_crow()
@@ -535,8 +515,16 @@ end
 
 function set_env_delay_rand(synth_num, value)
   engine.env_delay_rand(synth_num, value)
+  local i = params:get("crow_out_pairs")
   if norns.crow.connected() then
-    set_crow()
+    if params:get("crow_config") == 2 then
+      if synth_num == 1 then
+        crow.output[2].dyn.crow_env_delay2 = params:get("env_delay1")/100 + math.random() * params:get("env_delay_rand1")
+      end
+      if i == synth_num then
+        crow.output[4].dyn.crow_env_delay4 = params:get("env_delay" .. synth_num)/100 + math.random() * params:get("env_delay_rand" .. synth_num)
+      end
+    end
   end
 end
 
@@ -546,9 +534,61 @@ function set_crow_env_delay_pos_default(x)
   end
 end
 
-function set_crow_env_delay_pos()
+function set_crow_env_delay_pos(synth_num)
   if norns.crow.connected() then
-    set_crow()
+    if params:get("crow_config") == 2 then
+      if synth_num == 1 then
+        --crow out 2 env
+        if params:string("crow_env_delay_pos1") == "before" then
+          -- _/\
+          crow.output[2].action = "loop{ to(0, dyn{crow_env_delay2 = 0.0}), to(7, dyn{crow_attack2 = 0.01}), to(0, dyn{crow_decay2 = 0.1}) }"
+        elseif params:string("crow_env_delay_pos1") == "after" then
+          -- /\_
+          crow.output[2].action = "loop{ to(7, dyn{crow_attack2 = 0.01}), to(0, dyn{crow_decay2 = 0.1}), to(0, dyn{crow_env_delay2 = 0}) }"
+        end
+        crow.output[2]()
+      else
+        -- crow out 4 env
+        if params:string("crow_env_delay_pos" .. synthnum) == "before" then
+          -- _/\
+          crow.output[4].action = "loop{ to(0, dyn{crow_env_delay4 = 0.0}), to(7, dyn{crow_attack4 = 0.01}), to(0, dyn{crow_decay4 = 0.1}) }"
+        elseif params:string("crow_env_delay_pos" .. synthnum) == "after" then
+          -- /\_
+          crow.output[4].action = "loop{ to(7, dyn{crow_attack4 = 0.01}), to(0, dyn{crow_decay4 = 0.1}), to(0, dyn{crow_env_delay4 = 0}) }"
+        end
+        crow.output[4]()
+      end
+    end
+  end
+end
+
+function set_crow_note_env_pair_envs(synthnum)
+  local i = params:get("crow_out_pairs")
+  --crow out 2 env
+  if params:string("crow_env_delay_pos1") == "before" then
+    -- _/\
+    crow.output[2].action = "loop{ to(0, dyn{crow_env_delay2 = 0.0}), to(7, dyn{crow_attack2 = 0.01}), to(0, dyn{crow_decay2 = 0.1}) }"
+  elseif params:string("crow_env_delay_pos1") == "after" then
+    -- /\_
+    crow.output[2].action = "loop{ to(7, dyn{crow_attack2 = 0.01}), to(0, dyn{crow_decay2 = 0.1}), to(0, dyn{crow_env_delay2 = 0}) }"
+  end
+  crow.output[2].dyn.crow_env_delay2 = params:get("env_delay1")/100 + math.random() * params:get("env_delay_rand1")
+  crow.output[2].dyn.crow_attack2 = params:get("attack1")
+  crow.output[2].dyn.crow_decay2 = params:get("decay1")
+  crow.output[2]()
+
+  if i == synth_num then
+    if params:string("crow_env_delay_pos" .. synthnum) == "before" then
+      -- _/\
+      crow.output[4].action = "loop{ to(0, dyn{crow_env_delay4 = 0.0}), to(7, dyn{crow_attack4 = 0.01}), to(0, dyn{crow_decay4 = 0.1}) }"
+    elseif params:string("crow_env_delay_pos" .. synthnum) == "after" then
+      -- /\_
+      crow.output[4].action = "loop{ to(7, dyn{crow_attack4 = 0.01}), to(0, dyn{crow_decay4 = 0.1}), to(0, dyn{crow_env_delay4 = 0}) }"
+    end
+    crow.output[4].dyn.crow_env_delay4 = params:get("env_delay" .. synthnum)/100 + math.random() * params:get("env_delay_rand" .. synthnum)
+    crow.output[4].dyn.crow_attack4 = params:get("attack" .. synthnum)
+    crow.output[4].dyn.crow_decay4 = params:get("decay" .. synthnum)
+    crow.output[4]()
   end
 end
 
@@ -575,7 +615,11 @@ function set_note(synth_num, value)
     edit = synth_num
   end
   if norns.crow.connected() then
-    set_crow()
+    if params:get("crow_config") == 1 then
+      set_crow_notes()
+    elseif params:get("crow_config") == 2 then
+      set_crow_note_env_pair_notes()
+    end
   end
   screen_dirty = true
 end
@@ -593,7 +637,6 @@ function set_vol(synth_num, value)
   -- update displayed sine value
   local s_id = (synth_num + 1)
   sliders[s_id] = math.floor(util.linlin(0.0, 1.0, 0, max_slider_size, value))
-
   screen_dirty = true
 end
 
@@ -622,7 +665,51 @@ function set_env(synth_num, value)
   params:set("attack" .. synth_num, envs[value][3])
   params:set("decay" .. synth_num, envs[value][4])
   if norns.crow.connected() then
-    set_crow()
+    set_amp_atk_crow(synth_num)
+    set_amp_rel_crow(synth_num)
+    set_amp_env_delay_crow(synth_num)
+  end
+end
+
+function set_amp_atk_crow(synth_num)
+  local i = params:get("crow_out_pairs")
+  if norns.crow.connected() then
+    if params:get("crow_config") == 2 then
+      if synth_num == 1 then
+        crow.output[2].dyn.crow_attack2 = params:get("attack1")
+      end
+      if i == synth_num then
+        crow.output[4].dyn.crow_attack4 = params:get("attack" .. synth_num)
+      end
+    end
+  end
+end
+
+function set_amp_rel_crow(synth_num)
+  local i = params:get("crow_out_pairs")
+  if norns.crow.connected() then
+    if params:get("crow_config") == 2 then
+      if synth_num == 1 then
+        crow.output[2].dyn.crow_decay2 = params:get("decay1")
+      end
+      if i == synth_num then
+        crow.output[4].dyn.crow_decay4 = params:get("decay" .. synth_num)
+      end
+    end
+  end
+end
+
+function set_amp_env_delay_crow(synth_num)
+  local i = params:get("crow_out_pairs")
+  if norns.crow.connected() then
+    if params:get("crow_config") == 2 then
+      if synth_num == 1 then
+        crow.output[2].dyn.crow_env_delay2 = params:get("env_delay1")/100 + math.random() * params:get("env_delay_rand1")
+      end
+      if i == synth_num then
+        crow.output[4].dyn.crow_env_delay4 = params:get("env_delay" .. synth_num)/100 + math.random() * params:get("env_delay_rand" .. synth_num)
+      end
+    end
   end
 end
 
@@ -674,17 +761,26 @@ end
 function set_amp_atk(synth_num, value)
   engine.amp_atk(synth_num, value)
   edit = synth_num
+  if norns.crow.connected() then
+    set_amp_atk_crow(synth_num)
+  end
 end
 
 function set_amp_rel(synth_num, value)
   engine.amp_rel(synth_num, value)
   edit = synth_num
+  if norns.crow.connected() then
+    set_amp_rel_crow(synth_num)
+  end
 end
 
 function set_amp_env_delay(synth_num, value)
   engine.env_delay(synth_num, value/100)
   edit = synth_num
   screen_dirty = true
+  if norns.crow.connected() then
+    set_amp_env_delay_crow(synth_num)
+  end
 end
 
 function set_env_bias(synth_num, value)
